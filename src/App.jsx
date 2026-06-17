@@ -205,43 +205,43 @@ function Modal({ title, children, onClose }) {
   </div></div>;
 }
 
-function AdminResetModal({ data, setData, onClose }) {
+function AdminResetModal({ data, commitReset, onClose }) {
   const [pending, setPending] = useState(null);
   const [notice, setNotice] = useState('');
   const requestReset = (title, message, action, danger = false) => setPending({ title, message, action, danger });
   const runReset = () => {
-    pending.action();
+    commitReset(pending.action);
     setNotice(`${pending.title} berjaya dilaksanakan.`);
     setPending(null);
   };
-  const resetGroups = () => setData((previous) => {
+  const resetGroups = (previous) => {
     const groups = Array.from({ length: Math.ceil(previous.teams.length / 3) }, (_, index) => ({
       id: `group-${index + 1}`,
       name: `Kumpulan ${index + 1}`,
       teamIds: previous.teams.slice(index * 3, index * 3 + 3).map((team) => team.id),
     }));
     return { ...previous, groups, matches: generateGroupMatches(groups), knockoutMatches: [], settings: { ...previous.settings, knockoutGenerated: false } };
-  });
-  const resetResults = () => setData((previous) => ({
+  };
+  const resetResults = (previous) => ({
     ...previous,
     matches: previous.matches.map((match) => ({ ...match, status: 'Menunggu', homeScore: '', awayScore: '' })),
     knockoutMatches: [],
     activities: [],
     settings: { ...previous.settings, knockoutGenerated: false },
-  }));
-  const resetLogos = () => setData((previous) => ({
+  });
+  const resetLogos = (previous) => ({
     ...previous,
     schools: previous.schools.map((school) => ({ ...school, logo: '' })),
     teams: previous.teams.map((team) => ({ ...team, logo: '' })),
-  }));
+  });
   return <Modal title="Pusat Reset Admin" onClose={onClose}>
     {notice && <div className="reset-notice"><FontAwesomeIcon icon={faCheck} /> {notice}</div>}
     {!pending ? <div className="admin-reset-grid">
       <button onClick={() => requestReset('Reset Kumpulan & Jadual', 'Susun semula semua pasukan mengikut urutan dan jana jadual kumpulan baharu?', resetGroups)}><FontAwesomeIcon icon={faLayerGroup} /><div><strong>Reset Kumpulan & Jadual</strong><span>Susun semula kumpulan asal dan kosongkan jadual kalah singkir.</span></div></button>
       <button onClick={() => requestReset('Reset Keputusan', 'Kosongkan semua skor, status perlawanan dan aktiviti terkini?', resetResults)}><FontAwesomeIcon icon={faFutbol} /><div><strong>Reset Keputusan</strong><span>Kosongkan skor dan status tanpa membuang pasukan.</span></div></button>
       <button onClick={() => requestReset('Reset Logo Sekolah', 'Buang semua logo sekolah yang telah dimuat naik?', resetLogos)}><FontAwesomeIcon icon={faSchool} /><div><strong>Reset Logo Sekolah</strong><span>Buang semua logo tanpa mengubah pasukan.</span></div></button>
-      <button onClick={() => requestReset('Reset Pasukan & Semua Data', 'Kembalikan sekolah, pasukan, kumpulan dan keputusan kepada data asal?', () => setData(seedData()))}><FontAwesomeIcon icon={faUsers} /><div><strong>Reset Pasukan & Semua Data</strong><span>Kembalikan keseluruhan sistem kepada data asal.</span></div></button>
-      <button className="danger" onClick={() => requestReset('Reset Penuh Sistem', 'Padam semua data simpanan browser dan mulakan semula sistem?', () => { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(LOGO_CLEANUP_KEY); localStorage.removeItem(ROSTER_VERSION_KEY); localStorage.setItem(KNOCKOUT_GATE_VERSION_KEY, 'done'); setData(seedData()); }, true)}><FontAwesomeIcon icon={faTrash} /><div><strong>Reset Penuh Sistem</strong><span>Padam data tersimpan dan mulakan semula.</span></div></button>
+      <button onClick={() => requestReset('Reset Pasukan & Semua Data', 'Kembalikan sekolah, pasukan, kumpulan dan keputusan kepada data asal?', () => seedData())}><FontAwesomeIcon icon={faUsers} /><div><strong>Reset Pasukan & Semua Data</strong><span>Kembalikan keseluruhan sistem kepada data asal.</span></div></button>
+      <button className="danger" onClick={() => requestReset('Reset Penuh Sistem', 'Padam semua data simpanan browser dan mulakan semula sistem?', () => seedData(), true)}><FontAwesomeIcon icon={faTrash} /><div><strong>Reset Penuh Sistem</strong><span>Padam data tersimpan dan mulakan semula.</span></div></button>
     </div> : <div className={`reset-confirm ${pending.danger ? 'danger' : ''}`}><div className="reset-confirm-icon"><FontAwesomeIcon icon={pending.danger ? faTrash : faBolt} /></div><h4>{pending.title}</h4><p>{pending.message}</p><div className="modal-actions"><button className="btn ghost" onClick={() => setPending(null)}>Batal</button><button className={`btn ${pending.danger ? 'danger-btn' : 'primary'}`} onClick={runReset}>Ya, Teruskan Reset</button></div></div>}
   </Modal>;
 }
@@ -1005,6 +1005,7 @@ function Stats({ data, standings, teamById }) {
 
 export default function App() {
   const firebaseHydrated = useRef(!isFirebaseConfigured());
+  const ignoreRemoteUntil = useRef(0);
   const [data, setData] = useState(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -1027,10 +1028,30 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const printRef = useRef(null);
+  const commitReset = (createNextData) => {
+    const nextData = repairStoredData(createNextData(data));
+    const resetData = {
+      ...nextData,
+      settings: {
+        ...nextData.settings,
+        lastResetAt: new Date().toISOString(),
+      },
+    };
+    ignoreRemoteUntil.current = Date.now() + 3000;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(resetData));
+    localStorage.setItem(ROSTER_VERSION_KEY, 'done');
+    localStorage.setItem(KNOCKOUT_GATE_VERSION_KEY, 'done');
+    if (!resetData.schools.some((school) => school.logo)) localStorage.setItem(LOGO_CLEANUP_KEY, 'done');
+    setData(resetData);
+    if (isFirebaseConfigured()) {
+      saveTournament(resetData).catch((error) => console.error('Reset tidak dapat sync ke Firebase.', error));
+    }
+  };
   useEffect(() => {
     if (!isFirebaseConfigured()) return undefined;
     return subscribeToTournament((remoteData) => {
       firebaseHydrated.current = true;
+      if (Date.now() < ignoreRemoteUntil.current) return;
       if (remoteData) setData(repairStoredData(remoteData));
       else saveTournament(data).catch((error) => console.error('Firebase belum dapat dimulakan.', error));
     }, (error) => {
@@ -1096,6 +1117,6 @@ export default function App() {
     <main><header><button className="menu-btn" onClick={() => setMenuOpen(!menuOpen)}><FontAwesomeIcon icon={faBars} /></button><div><span>Selamat datang,</span><strong>Urusetia Kejohanan</strong></div><div className="header-actions"><div className="system-live"><i /> SISTEM LIVE</div>{active === 'matches' && <PrintButton onClick={printPdf} />}<span className="avatar">UK</span></div></header>
       <div className="content" ref={printRef}>{page}</div>
     </main>
-    {resetOpen && <AdminResetModal {...{ data, setData }} onClose={() => setResetOpen(false)} />}
+    {resetOpen && <AdminResetModal {...{ data, commitReset }} onClose={() => setResetOpen(false)} />}
   </div>;
 }
