@@ -2,12 +2,12 @@ import { initializeApp } from 'firebase/app';
 import { disableNetwork, doc, getFirestore, onSnapshot, setDoc } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyCq9jYRHIZiG-ywD8IE_Nx1PIHAdZRXxao',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'takraw-mssd-hulu-langat-b05e0.firebaseapp.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'takraw-mssd-hulu-langat-b05e0',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'takraw-mssd-hulu-langat-b05e0.firebasestorage.app',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '605347927039',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:605347927039:web:b2d088e720e2ece75f8dca',
 };
 
 const requiredFirebaseValues = Object.values(firebaseConfig);
