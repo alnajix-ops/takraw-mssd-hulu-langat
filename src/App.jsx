@@ -25,6 +25,8 @@ const LOGO_CLEANUP_KEY = 'mssd-takraw-logo-cleanup-v2';
 const ROSTER_VERSION_KEY = 'mssd-takraw-roster-2026-v3';
 const KNOCKOUT_GATE_VERSION_KEY = 'mssd-takraw-knockout-gate-v1';
 const MAX_STORED_LOGO_LENGTH = 450000;
+const TOURNAMENT_DATE = '22 - 26 JUN 2026';
+const TOURNAMENT_LOCATION = 'DEWAN BERLIAN SK BANDAR SERI PUTRA';
 const navItems = [
   { id: 'dashboard', label: 'Dashboard Utama', icon: faGaugeHigh },
   { id: 'schools', label: 'Sekolah', icon: faSchool },
@@ -45,10 +47,10 @@ const KNOCKOUT_OPENING = [
   ['J6', null], ['J27', 'N9'], ['J11', 'N25'], ['J22', 'N14'],
 ];
 const P16_PATHS = [
-  ['Laluan JOHAN 1 / P1', 'Pemenang P2 / P3'], ['Pemenang P4 / P5', 'Pemenang P6 / P7'],
-  ['Laluan JOHAN 4 / P8', 'Pemenang P9 / P10'], ['Laluan JOHAN 5 / P11', 'Pemenang P12 / P13'],
-  ['Laluan JOHAN 2 / P14', 'Pemenang P15 / P16'], ['Pemenang P17 / P18', 'Pemenang P19 / P20'],
-  ['Laluan JOHAN 3 / P21', 'Pemenang P22 / P23'], ['Laluan JOHAN 6 / P24', 'Pemenang P25 / P26'],
+  ['Pemenang P32-1', 'Pemenang P32-2'], ['Pemenang P32-3', 'Pemenang P32-4'],
+  ['Pemenang P32-5', 'Pemenang P32-6'], ['Pemenang P32-7', 'Pemenang P32-8'],
+  ['Pemenang P32-9', 'Pemenang P32-10'], ['Pemenang P32-11', 'Pemenang P32-12'],
+  ['Pemenang P32-13', 'Pemenang P32-14'], ['Pemenang P32-15', 'Pemenang P32-16'],
 ];
 
 function knockoutQualifiers(data, standings) {
@@ -80,12 +82,74 @@ const chartOptions = {
   },
 };
 
+function normalizeTournamentSettings(settings = {}, freshSettings = seedData().settings) {
+  return {
+    ...freshSettings,
+    ...settings,
+    date: TOURNAMENT_DATE,
+    location: TOURNAMENT_LOCATION,
+  };
+}
+
+function cleanTournamentData(base = seedData()) {
+  return removeOversizedLogos({
+    ...base,
+    matches: generateGroupMatches(base.groups),
+    activities: [],
+    knockoutMatches: [],
+    settings: {
+      ...normalizeTournamentSettings(base.settings),
+      knockoutGenerated: false,
+      isFullReset: false,
+    },
+  }, true);
+}
+
+function emptyTournamentData() {
+  const fresh = seedData();
+  return {
+    schools: [],
+    teams: [],
+    groups: [],
+    matches: [],
+    activities: [],
+    knockoutMatches: [],
+    settings: {
+      ...normalizeTournamentSettings(fresh.settings),
+      knockoutGenerated: false,
+      isFullReset: true,
+    },
+  };
+}
+
+function getLocalTournamentData() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isOlderThanLocalReset(remoteData) {
+  try {
+    const localData = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    const localReset = Date.parse(localData?.settings?.lastResetAt || '');
+    if (!localReset) return false;
+    const remoteReset = Date.parse(remoteData?.settings?.lastResetAt || '');
+    const remoteUpdated = Date.parse(remoteData?.updatedAt || '');
+    return Math.max(remoteReset || 0, remoteUpdated || 0) < localReset;
+  } catch {
+    return false;
+  }
+}
+
 function removeEdgeWhiteBackground(source) {
   return new Promise((resolve) => {
     if (!source) return resolve(source);
     const image = new Image();
     image.onload = () => {
-      const maxDimension = 512;
+      const maxDimension = 240;
       const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -120,7 +184,7 @@ function removeEdgeWhiteBackground(source) {
         if (y < height - 1) add(x, y + 1);
       }
       context.putImageData(frame, 0, 0);
-      resolve(canvas.toDataURL('image/webp', 0.88));
+      resolve(canvas.toDataURL('image/webp', 0.76));
     };
     image.onerror = () => resolve(source);
     image.src = source;
@@ -136,6 +200,28 @@ function removeOversizedLogos(data, removeAll = false) {
     ...data,
     schools: data.schools.map((school) => schoolIds.has(school.id) ? { ...school, logo: '' } : school),
     teams: data.teams.map((team) => schoolIds.has(team.schoolId) ? { ...team, logo: '' } : team),
+  };
+}
+
+function attachSchoolLogosToTeams(data) {
+  const schoolById = Object.fromEntries((data.schools || []).map((school) => [school.id, school]));
+  return {
+    ...data,
+    teams: (data.teams || []).map((team) => {
+      const school = schoolById[team.schoolId];
+      return {
+        ...team,
+        logo: school?.logo || team.logo || '',
+        color: school?.color || team.color,
+      };
+    }),
+  };
+}
+
+function prepareTournamentForStorage(data) {
+  return {
+    ...data,
+    teams: (data.teams || []).map((team) => ({ ...team, logo: '' })),
   };
 }
 
@@ -156,7 +242,7 @@ function migrateRoster(stored) {
 }
 
 function repairStoredData(stored) {
-  const fresh = seedData();
+  const fresh = cleanTournamentData();
   if (!stored || !Array.isArray(stored.teams) || !Array.isArray(stored.schools)) return fresh;
   const validTeamIds = new Set(stored.teams.map((team) => team.id));
   const groups = (Array.isArray(stored.groups) ? stored.groups : fresh.groups)
@@ -166,17 +252,17 @@ function repairStoredData(stored) {
   const matches = (Array.isArray(stored.matches) ? stored.matches : [])
     .filter((match) => validGroupIds.has(match.groupId) && validTeamIds.has(match.homeId) && validTeamIds.has(match.awayId));
 
-  return removeOversizedLogos({
+  return attachSchoolLogosToTeams(removeOversizedLogos({
     ...fresh,
     ...stored,
     schools: stored.schools,
     teams: stored.teams,
     groups,
-    matches: matches.length ? matches : fresh.matches,
+    matches: Array.isArray(stored.matches) ? matches : fresh.matches,
     activities: Array.isArray(stored.activities) ? stored.activities : fresh.activities,
     knockoutMatches: Array.isArray(stored.knockoutMatches) ? stored.knockoutMatches : [],
-    settings: { ...fresh.settings, ...(stored.settings || {}) },
-  });
+    settings: normalizeTournamentSettings(stored.settings, fresh.settings),
+  }));
 }
 
 function TeamLogo({ team, size = 'md' }) {
@@ -220,7 +306,7 @@ function AdminResetModal({ data, commitReset, onClose }) {
       name: `Kumpulan ${index + 1}`,
       teamIds: previous.teams.slice(index * 3, index * 3 + 3).map((team) => team.id),
     }));
-    return { ...previous, groups, matches: generateGroupMatches(groups), knockoutMatches: [], settings: { ...previous.settings, knockoutGenerated: false } };
+    return { ...previous, groups, matches: generateGroupMatches(groups), knockoutMatches: [], activities: [], settings: { ...previous.settings, knockoutGenerated: false } };
   };
   const resetResults = (previous) => ({
     ...previous,
@@ -240,15 +326,15 @@ function AdminResetModal({ data, commitReset, onClose }) {
       <button onClick={() => requestReset('Reset Kumpulan & Jadual', 'Susun semula semua pasukan mengikut urutan dan jana jadual kumpulan baharu?', resetGroups)}><FontAwesomeIcon icon={faLayerGroup} /><div><strong>Reset Kumpulan & Jadual</strong><span>Susun semula kumpulan asal dan kosongkan jadual kalah singkir.</span></div></button>
       <button onClick={() => requestReset('Reset Keputusan', 'Kosongkan semua skor, status perlawanan dan aktiviti terkini?', resetResults)}><FontAwesomeIcon icon={faFutbol} /><div><strong>Reset Keputusan</strong><span>Kosongkan skor dan status tanpa membuang pasukan.</span></div></button>
       <button onClick={() => requestReset('Reset Logo Sekolah', 'Buang semua logo sekolah yang telah dimuat naik?', resetLogos)}><FontAwesomeIcon icon={faSchool} /><div><strong>Reset Logo Sekolah</strong><span>Buang semua logo tanpa mengubah pasukan.</span></div></button>
-      <button onClick={() => requestReset('Reset Pasukan & Semua Data', 'Kembalikan sekolah, pasukan, kumpulan dan keputusan kepada data asal?', () => seedData())}><FontAwesomeIcon icon={faUsers} /><div><strong>Reset Pasukan & Semua Data</strong><span>Kembalikan keseluruhan sistem kepada data asal.</span></div></button>
-      <button className="danger" onClick={() => requestReset('Reset Penuh Sistem', 'Padam semua data simpanan browser dan mulakan semula sistem?', () => seedData(), true)}><FontAwesomeIcon icon={faTrash} /><div><strong>Reset Penuh Sistem</strong><span>Padam data tersimpan dan mulakan semula.</span></div></button>
+      <button onClick={() => requestReset('Reset Pasukan & Semua Data', 'Kembalikan sekolah, pasukan, kumpulan dan keputusan kepada data asal?', () => cleanTournamentData())}><FontAwesomeIcon icon={faUsers} /><div><strong>Reset Pasukan & Semua Data</strong><span>Kembalikan keseluruhan sistem kepada data asal.</span></div></button>
+      <button className="danger" onClick={() => requestReset('Reset Penuh Sistem', 'Kosongkan semua sekolah, pasukan, kumpulan, jadual, logo dan keputusan?', () => emptyTournamentData(), true)}><FontAwesomeIcon icon={faTrash} /><div><strong>Reset Penuh Sistem</strong><span>Kosongkan keseluruhan sistem.</span></div></button>
     </div> : <div className={`reset-confirm ${pending.danger ? 'danger' : ''}`}><div className="reset-confirm-icon"><FontAwesomeIcon icon={pending.danger ? faTrash : faBolt} /></div><h4>{pending.title}</h4><p>{pending.message}</p><div className="modal-actions"><button className="btn ghost" onClick={() => setPending(null)}>Batal</button><button className={`btn ${pending.danger ? 'danger-btn' : 'primary'}`} onClick={runReset}>Ya, Teruskan Reset</button></div></div>}
   </Modal>;
 }
 
 function Dashboard({ data, standings, teamById, groupById }) {
   const finished = data.matches.filter((m) => m.status === 'Tamat').length;
-  const progress = Math.round((finished / data.matches.length) * 100);
+  const progress = data.matches.length ? Math.round((finished / data.matches.length) * 100) : 0;
   const activeCourts = ['A', 'B', 'C'].map((court) => {
     const live = data.matches.find((m) => m.court === court && m.status === 'Sedang Bermain');
     const next = data.matches.find((m) => m.court === court && m.status === 'Menunggu');
@@ -258,6 +344,9 @@ function Dashboard({ data, standings, teamById, groupById }) {
     const teamIds = new Set(group.teamIds);
     return { group, team: standings.find((row) => teamIds.has(row.id)) };
   });
+  const tickerItems = data.matches
+    .filter((match) => ['Sedang Bermain', 'Tamat'].includes(match.status) && teamById[match.homeId] && teamById[match.awayId])
+    .slice(0, 6);
 
   return <div className="page-stack dashboard-page">
     <section className="hero">
@@ -267,7 +356,7 @@ function Dashboard({ data, standings, teamById, groupById }) {
         <div className="hero-kicker"><span>EDISI 2026</span><b>MSSD HULU LANGAT · LIVE TOURNAMENT SYSTEM</b></div>
         <div className="eyebrow"><FontAwesomeIcon icon={faTrophy} /> KEJOHANAN PERINGKAT DAERAH</div>
         <h1>KEJOHANAN SEPAK TAKRAW<br /><em>MSSD HULU LANGAT</em></h1>
-        <p>BAWAH 12 TAHUN · MUSIM 2026</p>
+        <p>BAWAH 12 TAHUN · TAHUN 2026</p>
         <div className="hero-meta">
           <span><FontAwesomeIcon icon={faClock} /> {data.settings.date}</span>
           <span><FontAwesomeIcon icon={faLocationDot} /> {data.settings.location}</span>
@@ -294,9 +383,13 @@ function Dashboard({ data, standings, teamById, groupById }) {
     <div className="live-ticker">
       <span className="ticker-label"><i /> LIVE UPDATE</span>
       <div className="ticker-track"><div>
-        <b>GELANGGANG A</b> SK Jalan Semenyih 1 A <strong>16 : 15</strong> SK Jalan Semenyih 2 A
+        {tickerItems.length ? tickerItems.map((match, index) => <React.Fragment key={match.id}>
+          {index > 0 && <em>&bull;</em>}<b>GELANGGANG {match.court}</b> {teamById[match.homeId].name} <strong>{match.homeScore || 0} : {match.awayScore || 0}</strong> {teamById[match.awayId].name}
+        </React.Fragment>) : <><b>SISTEM RESET</b> Tiada kemas kini perlawanan dipaparkan buat masa ini.</>}
+        {false && <>
         <em>•</em><b>GELANGGANG B</b> SK Semenyih A <strong>14 : 13</strong> SK Bangi A
         <em>•</em><b>GELANGGANG C</b> SK Bandar Teknologi Kajang A <strong>15 : 14</strong> SK Bangi A
+        </>}
       </div></div>
     </div>
 
@@ -306,7 +399,7 @@ function Dashboard({ data, standings, teamById, groupById }) {
         [faUsers, data.groups.length, 'Jumlah Kumpulan', 'purple'],
         [faTrophy, data.matches.length, 'Jumlah Perlawanan', 'gold'],
         [faCheck, finished, 'Selesai', 'green'],
-        [faClock, data.matches.length - finished, 'Belum Selesai', 'pink'],
+        [faClock, Math.max(0, data.matches.length - finished), 'Belum Selesai', 'pink'],
       ].map(([icon, value, label, tone]) => <div className={`summary-card ${tone}`} key={label}>
         <span className="summary-icon"><FontAwesomeIcon icon={icon} /></span>
         <div><strong>{value}</strong><span>{label}</span></div>
@@ -356,6 +449,8 @@ function Dashboard({ data, standings, teamById, groupById }) {
 function Schools({ data, setData }) {
   const [editing, setEditing] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkLogoOpen, setBulkLogoOpen] = useState(false);
+  const [groupPlannerOpen, setGroupPlannerOpen] = useState(false);
   const [copied, setCopied] = useState(null);
   const [query, setQuery] = useState('');
   const filtered = data.schools.filter((s) => s.name.toLowerCase().includes(query.toLowerCase()));
@@ -382,7 +477,7 @@ function Schools({ data, setData }) {
     setData((prev) => ({ ...prev, teams: [...prev.teams, { ...copied, id: `team-${Date.now()}`, schoolId: school.id, name: `${school.name} ${suffix}`, suffix, logo: school.logo, color: school.color }] }));
   };
   return <div className="page-stack">
-    <SectionHead eyebrow="PANGKALAN DATA" title="Sekolah & Regu" action={<div className="school-head-actions"><button className="btn ghost" onClick={() => setBulkOpen(true)}><FontAwesomeIcon icon={faClipboard} /> Daftar Sekolah Pukal</button><button className="btn primary" onClick={() => setEditing({ name: '', logo: '' })}><FontAwesomeIcon icon={faPlus} /> Tambah Sekolah</button></div>} />
+    <SectionHead eyebrow="PANGKALAN DATA" title="Sekolah & Regu" action={<div className="school-head-actions"><button className="btn ghost" onClick={() => setGroupPlannerOpen(true)}><FontAwesomeIcon icon={faLayerGroup} /> Susun Kumpulan</button><button className="btn ghost" onClick={() => setBulkLogoOpen(true)}><FontAwesomeIcon icon={faUpload} /> Upload Logo Pukal</button><button className="btn ghost" onClick={() => setBulkOpen(true)}><FontAwesomeIcon icon={faClipboard} /> Daftar Sekolah Pukal</button><button className="btn primary" onClick={() => setEditing({ name: '', logo: '' })}><FontAwesomeIcon icon={faPlus} /> Tambah Sekolah</button></div>} />
     <div className="toolbar"><label className="search"><FontAwesomeIcon icon={faSearch} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari sekolah..." /></label><span>{filtered.length} sekolah · {data.teams.length} regu</span></div>
     <div className="school-grid">{filtered.map((school) => {
       const teams = data.teams.filter((t) => t.schoolId === school.id);
@@ -393,7 +488,98 @@ function Schools({ data, setData }) {
     })}</div>
     {editing && <SchoolModal school={editing} onSave={saveSchool} onClose={() => setEditing(null)} />}
     {bulkOpen && <BulkSchoolModal data={data} setData={setData} onClose={() => setBulkOpen(false)} />}
+    {bulkLogoOpen && <BulkLogoModal data={data} setData={setData} onClose={() => setBulkLogoOpen(false)} />}
+    {groupPlannerOpen && <SchoolGroupPlanner data={data} setData={setData} onClose={() => setGroupPlannerOpen(false)} />}
   </div>;
+}
+
+function SchoolGroupPlanner({ data, setData, onClose }) {
+  const makeGroups = (teams = data.teams) => Array.from({ length: Math.ceil(Math.max(teams.length, 1) / 3) }, (_, index) => ({
+    id: `group-${index + 1}`,
+    name: `Kumpulan ${index + 1}`,
+    teamIds: teams.slice(index * 3, index * 3 + 3).map((team) => team.id),
+  }));
+  const initialGroups = data.groups.length ? data.groups : makeGroups();
+  const [draftGroups, setDraftGroups] = useState(initialGroups.map((group, index) => ({
+    id: group.id || `group-${index + 1}`,
+    name: group.name || `Kumpulan ${index + 1}`,
+    teamIds: [...(group.teamIds || [])].slice(0, 3),
+  })));
+  const selectedIds = draftGroups.flatMap((group) => group.teamIds).filter(Boolean);
+  const selectedSet = new Set(selectedIds);
+  const unassigned = data.teams.filter((team) => !selectedSet.has(team.id));
+  const updateSlot = (groupIndex, slot, teamId) => setDraftGroups((groups) => groups.map((group, index) => {
+    if (index !== groupIndex) return group;
+    const teamIds = [...group.teamIds];
+    teamIds[slot] = teamId;
+    return { ...group, teamIds };
+  }));
+  const autoArrange = () => setDraftGroups(makeGroups(data.teams));
+  const clearGroups = () => setDraftGroups(makeGroups([]).map((group) => ({ ...group, teamIds: [] })));
+  const addGroup = () => setDraftGroups((groups) => [...groups, { id: `group-${Date.now()}`, name: `Kumpulan ${groups.length + 1}`, teamIds: [] }]);
+  const save = () => {
+    const groups = draftGroups.map((group, index) => ({
+      ...group,
+      id: group.id || `group-${index + 1}`,
+      name: group.name || `Kumpulan ${index + 1}`,
+      teamIds: group.teamIds.filter(Boolean),
+    })).filter((group) => group.teamIds.length);
+    const duplicate = groups.flatMap((group) => group.teamIds).find((id, index, list) => list.indexOf(id) !== index);
+    if (duplicate) return alert('Ada pasukan yang dimasukkan lebih daripada satu kumpulan.');
+    setData((previous) => ({
+      ...previous,
+      groups,
+      matches: generateGroupMatches(groups),
+      knockoutMatches: [],
+      activities: [{ id: Date.now(), time: new Date().toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit' }), text: 'Susunan kumpulan dikemas kini dari tab sekolah', type: 'schedule' }, ...previous.activities].slice(0, 8),
+      settings: { ...previous.settings, knockoutGenerated: false },
+    }));
+    onClose();
+  };
+  return <Modal title="Susun Kumpulan Pasukan" onClose={onClose}><div className="school-group-planner">
+    <div className="planner-top">
+      <div><strong>{data.teams.length} pasukan</strong><span>{unassigned.length} belum masuk kumpulan</span></div>
+      <div className="planner-actions"><button className="btn small ghost" onClick={clearGroups}>Kosongkan</button><button className="btn small ghost" onClick={addGroup}>Tambah Kumpulan</button><button className="btn small primary" onClick={autoArrange}><FontAwesomeIcon icon={faBolt} /> Auto Susun</button></div>
+    </div>
+    {!!unassigned.length && <div className="unassigned-teams"><b>Belum masuk kumpulan:</b>{unassigned.slice(0, 12).map((team) => <span key={team.id}>{team.name}</span>)}{unassigned.length > 12 && <em>+{unassigned.length - 12} lagi</em>}</div>}
+    <div className="planner-grid">{draftGroups.map((group, groupIndex) => <article className="planner-group" key={group.id}>
+      <label>Nama Kumpulan<input value={group.name} onChange={(event) => setDraftGroups((groups) => groups.map((item, index) => index === groupIndex ? { ...item, name: event.target.value } : item))} /></label>
+      {[0, 1, 2].map((slot) => <TeamPicker key={slot} label={`Slot ${slot + 1}`} teams={data.teams} value={group.teamIds[slot] || ''} selectedSet={selectedSet} onChange={(teamId) => updateSlot(groupIndex, slot, teamId)} />)}
+    </article>)}</div>
+    <div className="modal-actions"><button className="btn ghost" onClick={onClose}>Batal</button><button className="btn primary" onClick={save}><FontAwesomeIcon icon={faCheck} /> Simpan & Jana Jadual</button></div>
+  </div></Modal>;
+}
+
+function TeamPicker({ label, teams, value, selectedSet, onChange }) {
+  const selected = teams.find((team) => team.id === value);
+  const [query, setQuery] = useState(selected?.name || '');
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    setQuery(selected?.name || '');
+  }, [selected?.id]);
+  const normalized = query.trim().toLowerCase();
+  const options = teams
+    .filter((team) => (!selectedSet.has(team.id) || team.id === value)
+      && (!normalized || team.name.toLowerCase().includes(normalized)))
+    .slice(0, 8);
+  const choose = (team) => {
+    onChange(team.id);
+    setQuery(team.name);
+    setOpen(false);
+  };
+  const clear = () => {
+    onChange('');
+    setQuery('');
+    setOpen(true);
+  };
+  return <label className="team-picker-label">{label}<div className="team-picker">
+    <input value={query} onFocus={() => setOpen(true)} onChange={(event) => { setQuery(event.target.value); setOpen(true); }} placeholder="Taip nama pasukan, contoh: TAMAN" />
+    {value && <button type="button" onClick={clear} aria-label="Kosongkan pilihan"><FontAwesomeIcon icon={faXmark} /></button>}
+    {open && <div className="team-picker-menu">
+      {options.length ? options.map((team) => <button type="button" key={team.id} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(team)}>{team.name}</button>)
+        : <span>Tiada pasukan sepadan</span>}
+    </div>}
+  </div></label>;
 }
 
 function BulkSchoolModal({ data, setData, onClose }) {
@@ -424,6 +610,90 @@ function BulkSchoolModal({ data, setData, onClose }) {
     <textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} placeholder={'SK Contoh Maju | 3\nSK Contoh Jaya | 2\nSK Contoh Indah'} />
     <div className="bulk-preview"><span>{unique.length} sekolah baharu</span><span>{totalTeams} regu akan dicipta</span><span>{parsed.length - unique.length} pendua diabaikan</span></div>
     <div className="modal-actions"><button className="btn ghost" onClick={onClose}>Batal</button><button className="btn primary" disabled={!unique.length} onClick={save}><FontAwesomeIcon icon={faPlus} /> Daftar Semua</button></div>
+  </div></Modal>;
+}
+
+function normalizeLogoKey(value = '') {
+  return value
+    .toLowerCase()
+    .replace(/\.(png|jpe?g|webp|gif)$/i, '')
+    .replace(/\b(logo|lencana|badge|emblem|school|sekolah)\b/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function findLogoTarget(fileName, data) {
+  const fileKey = normalizeLogoKey(fileName);
+  if (!fileKey) return null;
+  const schools = data.schools.map((school) => ({
+    school,
+    key: normalizeLogoKey(school.name),
+  })).filter((item) => item.key);
+  const teams = data.teams.map((team) => ({
+    school: data.schools.find((school) => school.id === team.schoolId),
+    key: normalizeLogoKey(team.name),
+  })).filter((item) => item.school && item.key);
+  return [...teams, ...schools]
+    .filter((item) => item.key === fileKey || fileKey.includes(item.key) || item.key.includes(fileKey))
+    .sort((a, b) => b.key.length - a.key.length)[0]?.school || null;
+}
+
+function readLogoFile(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > 5 * 1024 * 1024) return reject(new Error('Saiz melebihi 5MB'));
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        resolve(await removeEdgeWhiteBackground(reader.result));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    reader.onerror = () => reject(new Error('Fail tidak dapat dibaca'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function BulkLogoModal({ data, setData, onClose }) {
+  const [items, setItems] = useState([]);
+  const [processing, setProcessing] = useState(false);
+  const handleFiles = async (files) => {
+    const list = [...files].filter((file) => /\.(png|jpe?g|webp)$/i.test(file.name));
+    if (!list.length) return alert('Pilih fail logo PNG, JPG, JPEG atau WEBP.');
+    setProcessing(true);
+    const nextItems = await Promise.all(list.map(async (file) => {
+      const school = findLogoTarget(file.name, data);
+      if (!school) return { fileName: file.name, status: 'Tiada padanan sekolah' };
+      try {
+        const logo = await readLogoFile(file);
+        return { fileName: file.name, schoolId: school.id, schoolName: school.name, logo, status: 'Sedia' };
+      } catch (error) {
+        return { fileName: file.name, schoolId: school.id, schoolName: school.name, status: error.message || 'Gagal proses' };
+      }
+    }));
+    setItems(nextItems);
+    setProcessing(false);
+  };
+  const ready = items.filter((item) => item.logo && item.schoolId);
+  const save = () => {
+    if (!ready.length) return alert('Tiada logo yang berjaya dipadankan.');
+    const logoBySchool = Object.fromEntries(ready.map((item) => [item.schoolId, item.logo]));
+    setData((previous) => ({
+      ...previous,
+      schools: previous.schools.map((school) => logoBySchool[school.id] ? { ...school, logo: logoBySchool[school.id] } : school),
+      teams: previous.teams.map((team) => logoBySchool[team.schoolId] ? { ...team, logo: logoBySchool[team.schoolId] } : team),
+    }));
+    onClose();
+  };
+  return <Modal title="Upload Logo Sekolah Pukal" onClose={onClose}><div className="bulk-logo-form">
+    <div className="bulk-guide"><FontAwesomeIcon icon={faUpload} /><div><strong>Pilih banyak logo sekali</strong><span>Nama fail akan dipadankan dengan nama sekolah atau regu. Contoh: SK Taman Rakan.png</span></div></div>
+    <label className="upload-box bulk-logo-drop"><FontAwesomeIcon icon={faUpload} /><strong>{processing ? 'Memproses logo...' : 'Pilih fail logo pukal'}</strong><span>PNG, JPG, JPEG atau WEBP · Maksimum 5MB setiap fail</span><input multiple type="file" accept=".png,.jpg,.jpeg,.webp" disabled={processing} onChange={(event) => handleFiles(event.target.files)} /></label>
+    {!!items.length && <div className="bulk-logo-results">
+      <div className="bulk-preview"><span>{ready.length} logo sedia</span><span>{items.length - ready.length} perlu semak</span><span>{items.length} fail dipilih</span></div>
+      <div className="bulk-logo-list">{items.map((item) => <div className={item.logo ? 'matched' : 'unmatched'} key={item.fileName}>
+        <span>{item.fileName}</span><strong>{item.schoolName || item.status}</strong>
+      </div>)}</div>
+    </div>}
+    <div className="modal-actions"><button className="btn ghost" onClick={onClose}>Batal</button><button className="btn primary" disabled={processing || !ready.length} onClick={save}><FontAwesomeIcon icon={faCheck} /> Simpan {ready.length || ''} Logo</button></div>
   </div></Modal>;
 }
 
@@ -519,9 +789,8 @@ function Groups({ data, setData, teamById }) {
 function KnockoutSchedule({ type, standings, data, setData }) {
   const generated = Boolean(data.settings?.knockoutGenerated);
   const qualifiers = generated ? knockoutQualifiers(data, standings) : {};
-  let openingNumber = 0;
-  const openingRows = KNOCKOUT_OPENING.map(([homeCode, awayCode]) => ({
-    code: awayCode ? `P${++openingNumber}` : `BYE-${homeCode}`,
+  const openingRows = KNOCKOUT_OPENING.map(([homeCode, awayCode], index) => ({
+    code: `P${index + 1}`,
     home: qualifiers[homeCode],
     away: awayCode ? qualifiers[awayCode] : null,
     homeLabel: qualifierSlotLabel(homeCode),
@@ -533,17 +802,76 @@ function KnockoutSchedule({ type, standings, data, setData }) {
     homeLabel: `Pemenang ${previous}-${index * 2 + 1}`,
     awayLabel: `Pemenang ${previous}-${index * 2 + 2}`,
   }));
+  const p32Rows = Array.from({ length: 16 }, (_, index) => {
+    const first = openingRows[index * 2];
+    const second = openingRows[index * 2 + 1];
+    return {
+      code: `P32-${index + 1}`,
+      homeLabel: first?.bye ? `Laluan ${first.homeLabel}` : `Pemenang ${first?.code}`,
+      awayLabel: second?.bye ? `Laluan ${second.homeLabel}` : `Pemenang ${second?.code}`,
+    };
+  });
+  const p16Rows = P16_PATHS.map(([homeLabel, awayLabel], index) => ({ code: `P16-${index + 1}`, homeLabel, awayLabel }));
+  const sukuRows = placeholderRows(4, 'SUKU', 'P16');
+  const cupSemiRows = placeholderRows(2, 'SEPARUH', 'SUKU');
+  const cupFinalRows = placeholderRows(1, 'FINAL', 'SEPARUH');
+  const plateSemiRows = [
+    { code: 'PLATE-SF-1', homeLabel: 'Kalah Suku 1', awayLabel: 'Kalah Suku 2' },
+    { code: 'PLATE-SF-2', homeLabel: 'Kalah Suku 3', awayLabel: 'Kalah Suku 4' },
+  ];
+  const plateFinalRows = [{ code: 'FINAL-PLATE', homeLabel: 'Pemenang Plate 1', awayLabel: 'Pemenang Plate 2' }];
+  const saved = Object.fromEntries((data.knockoutMatches || []).map((match) => [match.code, match]));
+  const allRows = [...openingRows, ...p32Rows, ...p16Rows, ...sukuRows, ...cupSemiRows, ...cupFinalRows, ...plateSemiRows, ...plateFinalRows];
+  const rowByCode = Object.fromEntries(allRows.map((row) => [row.code, row]));
+  const normaliseOutcomeCode = (code) => {
+    const value = String(code || '').trim().toUpperCase();
+    if (/^SUKU\s+\d+$/.test(value)) return value.replace(' ', '-');
+    if (/^SEPARUH\s+\d+$/.test(value)) return value.replace(' ', '-');
+    if (/^PLATE\s+\d+$/.test(value)) return `PLATE-SF-${value.match(/\d+/)?.[0] || ''}`;
+    return value;
+  };
+  const resolveLabel = (label, depth = 0) => {
+    if (!label || depth > 14) return label || 'Menunggu';
+    const text = String(label);
+    const winnerMatch = text.match(/^Pemenang\s+(.+)$/i);
+    if (winnerMatch) return outcomeByCode(winnerMatch[1], depth + 1).winner || text;
+    const routeMatch = text.match(/^Laluan\s+(.+)$/i);
+    if (routeMatch) return outcomeByCode(routeMatch[1], depth + 1).winner || text;
+    const sukuLoserMatch = text.match(/^Kalah\s+Suku\s+(\d+)$/i);
+    if (sukuLoserMatch) return outcomeByCode(`SUKU-${sukuLoserMatch[1]}`, depth + 1).loser || text;
+    const plateWinnerMatch = text.match(/^Pemenang\s+Plate\s+(\d+)$/i);
+    if (plateWinnerMatch) return outcomeByCode(`PLATE-SF-${plateWinnerMatch[1]}`, depth + 1).winner || text;
+    return text;
+  };
+  function outcomeByCode(code, depth = 0) {
+    if (depth > 14) return { winner: null, loser: null };
+    const row = rowByCode[normaliseOutcomeCode(code)];
+    if (!row) return { winner: null, loser: null };
+    const homeName = row.home?.name || resolveLabel(row.homeLabel, depth + 1);
+    const awayName = row.away?.name || resolveLabel(row.awayLabel, depth + 1);
+    if (row.bye) return { winner: homeName || null, loser: null };
+    const result = saved[row.code];
+    if (!result || result.status !== 'Tamat' || result.homeScore === '' || result.awayScore === '') return { winner: null, loser: null };
+    const homeScore = Number(result.homeScore);
+    const awayScore = Number(result.awayScore);
+    if (Number.isNaN(homeScore) || Number.isNaN(awayScore) || homeScore === awayScore) return { winner: null, loser: null };
+    return homeScore > awayScore
+      ? { winner: homeName || null, loser: awayName || null }
+      : { winner: awayName || null, loser: homeName || null };
+  }
   const stages = type === 'quarter'
     ? [
-      { title: 'Pusingan 16', code: 'P16', rows: P16_PATHS.map(([homeLabel, awayLabel], index) => ({ code: `P16-${index + 1}`, homeLabel, awayLabel })) },
-      { title: 'Suku Akhir', code: 'SUKU', rows: placeholderRows(4, 'SUKU', 'P16') },
-      { title: 'Separuh Akhir', code: 'SEPARUH', rows: placeholderRows(2, 'SEPARUH', 'SUKU') },
-      { title: 'Final', code: 'FINAL', rows: placeholderRows(1, 'FINAL', 'SEPARUH') },
+      { title: 'Suku Akhir', code: 'SUKU', rows: sukuRows },
+      { title: 'Separuh Akhir Cup', code: 'SEPARUH', rows: cupSemiRows },
+      { title: 'Final Cup', code: 'FINAL', rows: cupFinalRows },
+      { title: 'Separuh Akhir Plate', code: 'PLATE SF', rows: plateSemiRows },
+      { title: 'Final Plate', code: 'PLATE FINAL', rows: plateFinalRows },
     ]
     : [
-      { title: 'Pusingan Awal', code: 'P1-P26', rows: openingRows },
+      { title: 'Pusingan 64', code: 'P1-P32', rows: openingRows },
+      { title: 'Pusingan 32', code: 'P32', rows: p32Rows },
+      { title: 'Pusingan 16', code: 'P16', rows: p16Rows },
     ];
-  const saved = Object.fromEntries((data.knockoutMatches || []).map((match) => [match.code, match]));
   const update = (code, field, value) => setData((previous) => {
     const existing = previous.knockoutMatches || [];
     const match = existing.find((item) => item.code === code);
@@ -561,11 +889,13 @@ function KnockoutSchedule({ type, standings, data, setData }) {
     <div className="event-stage-list">{stage.rows.map((row, index) => {
       const result = saved[row.code] || { homeScore: '', awayScore: '', court: 'A', status: 'Menunggu' };
       const isBye = row.bye;
+      const homeLabel = row.home?.name || resolveLabel(row.homeLabel);
+      const awayLabel = row.away?.name || resolveLabel(row.awayLabel);
       return <article className={`event-stage-row ${isBye ? 'is-bye' : ''}`} key={row.code}>
       <div className="event-match-number"><span>PERLAWANAN</span><strong>{String(index + 1).padStart(2, '0')}</strong></div>
-      <div className="event-team"><KnockoutTeam team={row.home} seed={row.homeSeed} label={row.homeLabel} /></div>
+      <div className="event-team"><KnockoutTeam team={row.home} seed={row.homeSeed} label={homeLabel} /></div>
       <div className="event-score">{isBye ? <div className="event-versus"><b>VS</b><span>{row.code}</span></div> : <><input type="number" min="0" value={result.homeScore} onChange={(e) => update(row.code, 'homeScore', e.target.value)} /><b>:</b><input type="number" min="0" value={result.awayScore} onChange={(e) => update(row.code, 'awayScore', e.target.value)} /></>}</div>
-      <div className="event-team away"><KnockoutTeam team={row.away} seed={row.awaySeed} label={row.awayLabel} /></div>
+      <div className="event-team away"><KnockoutTeam team={row.away} seed={row.awaySeed} label={awayLabel} /></div>
       {isBye ? <span className="event-status bye">BYE</span> : <div className="event-controls"><select value={result.court} onChange={(e) => update(row.code, 'court', e.target.value)}><option value="A">Gelanggang A</option><option value="B">Gelanggang B</option><option value="C">Gelanggang C</option></select><select value={result.status} onChange={(e) => update(row.code, 'status', e.target.value)}><option>Menunggu</option><option>Sedang Bermain</option><option>Tamat</option></select><button className="btn primary small" onClick={() => save(row.code)}><FontAwesomeIcon icon={faDownload} /> Simpan</button></div>}
     </article>;
     })}</div>
@@ -603,9 +933,13 @@ function Matches({ data, setData, teamById, groupById, standings }) {
     settings: { ...previous.settings, knockoutGenerated: true },
     activities: [{ id: Date.now(), time: new Date().toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit' }), text: 'Admin menjana susunan perlawanan kalah mati', type: 'schedule' }, ...previous.activities].slice(0, 8),
   }));
-  const day3Codes = Array.from({ length: 26 }, (_, index) => `P${index + 1}`);
+  const day3Codes = [
+    ...Array.from({ length: 32 }, (_, index) => `P${index + 1}`),
+    ...Array.from({ length: 16 }, (_, index) => `P32-${index + 1}`),
+    ...Array.from({ length: 8 }, (_, index) => `P16-${index + 1}`),
+  ];
   const day3Complete = day3Codes.every((code) => (data.knockoutMatches || []).find((match) => match.code === code)?.status === 'Tamat');
-  const day4Codes = [...Array.from({ length: 8 }, (_, index) => `P16-${index + 1}`), ...Array.from({ length: 4 }, (_, index) => `SUKU-${index + 1}`), ...Array.from({ length: 2 }, (_, index) => `SEPARUH-${index + 1}`), 'FINAL-1'];
+  const day4Codes = [...Array.from({ length: 4 }, (_, index) => `SUKU-${index + 1}`), ...Array.from({ length: 2 }, (_, index) => `SEPARUH-${index + 1}`), 'FINAL-1'];
   const update = (id, field, value) => setData((p) => ({ ...p, matches: p.matches.map((m) => m.id === id ? { ...m, [field]: value } : m) }));
   const save = (match) => {
     update(match.id, 'status', match.homeScore !== '' && match.awayScore !== '' ? 'Tamat' : match.status);
@@ -614,22 +948,22 @@ function Matches({ data, setData, teamById, groupById, standings }) {
   const groupNumber = (match) => data.groups.findIndex((group) => group.id === match.groupId) + 1;
   const dayMatches = data.matches.filter((match) => eventTab === 'day1' ? groupNumber(match) <= 14 : groupNumber(match) >= 15);
   const shown = dayMatches.filter((m) => (!filters.group || m.groupId === filters.group) && (!filters.round || String(m.round) === filters.round) && (!filters.court || m.court === filters.court) && (!filters.status || m.status === filters.status));
-  const displayedCount = eventTab === 'knockout' ? 26 : eventTab === 'quarter' ? 15 : shown.length;
+  const displayedCount = eventTab === 'knockout' ? 56 : eventTab === 'quarter' ? 7 : shown.length;
   return <div className="page-stack matches-page">
     <div className="matches-page-head">
       <div><span><FontAwesomeIcon icon={faFlagCheckered} /> ROUND ROBIN AUTOMATIK</span><h1>Perlawanan & Keputusan</h1><p>Urus gelanggang, status perlawanan dan keputusan dalam satu paparan.</p></div>
       <div className="matches-head-stat"><strong>{displayedCount}</strong><span>PERLAWANAN<br />DIPAPARKAN</span></div>
     </div>
     <div className="event-tabs">
-      {[['day1', 'HARI PERTAMA', 'Kumpulan 1 - 14'], ['day2', 'HARI KEDUA', 'Kumpulan 15 - 29'], ['knockout', 'HARI KETIGA', 'Perlawanan P1 hingga P26'], ['quarter', 'HARI KEEMPAT', 'P16 hingga final']].map(([id, label, note]) => <button className={eventTab === id ? 'active' : ''} key={id} onClick={() => setEventTab(id)}><strong>{label}</strong><span>{note}</span></button>)}
+      {[['day1', 'HARI PERTAMA', 'Kumpulan 1 - 14'], ['day2', 'HARI KEDUA', 'Kumpulan 15 - 29'], ['knockout', 'HARI KETIGA', 'Pusingan 64 hingga Pusingan 16'], ['quarter', 'HARI KEEMPAT', 'Suku akhir hingga final']].map(([id, label, note]) => <button className={eventTab === id ? 'active' : ''} key={id} onClick={() => setEventTab(id)}><strong>{label}</strong><span>{note}</span></button>)}
     </div>
     <section className="admin-simulator">
       <div className="admin-simulator-copy"><FontAwesomeIcon icon={faBolt} /><div><span>ALAT UJIAN ADMIN</span><strong>Simulasi Keputusan Rawak</strong><small>Skor maksimum 30 mata. Jana keputusan mengikut urutan peringkat.</small></div></div>
       <div className="admin-simulator-actions">
         <button className="btn primary" onClick={() => confirm('Jana keputusan rawak untuk semua perlawanan kumpulan?') && simulateGroups()}><FontAwesomeIcon icon={faLayerGroup} /> Auto Kumpulan</button>
         <button className="btn generate-knockout" disabled={!groupsComplete || knockoutGenerated} onClick={generateKnockout}><FontAwesomeIcon icon={faFlagCheckered} /> {knockoutGenerated ? 'Kalah Mati Telah Dijana' : 'Jana Perlawanan Kalah Mati'}</button>
-        <button className="btn primary" disabled={!knockoutGenerated} onClick={() => confirm('Jana keputusan rawak P1 hingga P26?') && simulateKnockout(day3Codes, 'Admin menjana keputusan rawak P1 hingga P26')}><FontAwesomeIcon icon={faFlagCheckered} /> Auto Hari Ketiga</button>
-        <button className="btn primary" disabled={!knockoutGenerated || !day3Complete} onClick={() => confirm('Jana keputusan rawak Pusingan 16 hingga Final?') && simulateKnockout(day4Codes, 'Admin menjana keputusan rawak Hari Keempat')}><FontAwesomeIcon icon={faTrophy} /> Auto Hari Keempat</button>
+        <button className="btn primary" disabled={!knockoutGenerated} onClick={() => confirm('Jana keputusan rawak Pusingan 64 hingga Pusingan 16?') && simulateKnockout(day3Codes, 'Admin menjana keputusan rawak Hari Ketiga')}><FontAwesomeIcon icon={faFlagCheckered} /> Auto Hari Ketiga</button>
+        <button className="btn primary" disabled={!knockoutGenerated || !day3Complete} onClick={() => confirm('Jana keputusan rawak Suku Akhir hingga Final?') && simulateKnockout(day4Codes, 'Admin menjana keputusan rawak Hari Keempat')}><FontAwesomeIcon icon={faTrophy} /> Auto Hari Keempat</button>
       </div>
     </section>
     {(eventTab === 'day1' || eventTab === 'day2') && <div className="filter-bar"><FontAwesomeIcon icon={faFilter} /><strong className="filter-label">Tapis Jadual</strong>{[
@@ -808,22 +1142,21 @@ function compactBracketName(name) {
   return name.replace(/^SK\s+/i, '').replace(/^SRI\s+/i, 'Sri ').replace(/^SERI\s+/i, 'Seri ').slice(0, 18);
 }
 
-function ModernBracket({ qualifiers, generated, data }) {
+function ModernBracket({ qualifiers, generated, data, phase = 'early' }) {
   const saved = Object.fromEntries((data.knockoutMatches || []).map((match) => [match.code, match]));
-  const matchWinner = (code, home, away) => {
-    if (!home || !away) return home || null;
+  const matchOutcome = (code, home, away) => {
+    if (!home || !away) return { winner: home || null, score: home ? 'BYE' : '' };
     const result = saved[code];
-    if (!result || result.status !== 'Tamat' || result.homeScore === '' || result.awayScore === '') return null;
+    if (!result || result.status !== 'Tamat' || result.homeScore === '' || result.awayScore === '') return { winner: null, score: '' };
     const homeScore = Number(result.homeScore);
     const awayScore = Number(result.awayScore);
-    if (Number.isNaN(homeScore) || Number.isNaN(awayScore) || homeScore === awayScore) return null;
-    return homeScore > awayScore ? home : away;
+    if (Number.isNaN(homeScore) || Number.isNaN(awayScore) || homeScore === awayScore) return { winner: null, score: `${result.homeScore}-${result.awayScore}` };
+    return { winner: homeScore > awayScore ? home : away, score: `${homeScore}-${awayScore}` };
   };
-  const rowHeight = 104;
-  const top = 88;
-  let openingMatchNumber = 0;
+  const rowHeight = 112;
+  const top = 74;
   const rows = KNOCKOUT_OPENING.map(([homeCode, awayCode], index) => {
-    const code = awayCode ? `P${++openingMatchNumber}` : `BYE-${homeCode}`;
+    const code = `P${index + 1}`;
     const home = generated ? qualifiers[homeCode] : null;
     const away = generated && awayCode ? qualifiers[awayCode] : null;
     return {
@@ -839,16 +1172,26 @@ function ModernBracket({ qualifiers, generated, data }) {
   });
   const openingNodes = rows.map((row) => ({
     y: row.y,
-    label: row.awayCode ? row.code : 'BYE',
+    label: row.code,
     bye: !row.awayCode,
-    winner: row.awayCode ? matchWinner(row.code, row.home, row.away) : row.home,
+    ...matchOutcome(row.code, row.home, row.away),
   }));
   const mid = (items) => items.reduce((sum, item) => sum + item.y, 0) / items.length;
-  const makeStage = (source, count, labelPrefix, codePrefix) => Array.from({ length: count }, (_, index) => {
-    const home = source[index * 2]?.winner || null;
-    const away = source[index * 2 + 1]?.winner || null;
-    const code = `${codePrefix}-${index + 1}`;
-    return { y: mid(source.slice(index * 2, index * 2 + 2)), label: `${labelPrefix}-${index + 1}`, code, winner: matchWinner(code, home, away) };
+  const makeStage = (source, count, labelPrefix, codePrefix, startNumber = 0) => Array.from({ length: count }, (_, index) => {
+    const homeSource = source[index * 2] || null;
+    const awaySource = source[index * 2 + 1] || null;
+    const home = homeSource?.winner || null;
+    const away = awaySource?.winner || null;
+    const number = startNumber + index + 1;
+    const code = `${codePrefix}-${number}`;
+    return {
+      y: mid(source.slice(index * 2, index * 2 + 2)),
+      label: `${labelPrefix}-${number}`,
+      code,
+      homeSource,
+      awaySource,
+      ...matchOutcome(code, home, away),
+    };
   });
   const p32 = makeStage(openingNodes, 16, 'P32', 'P32');
   const p16 = makeStage(p32, 8, 'P16', 'P16');
@@ -856,75 +1199,345 @@ function ModernBracket({ qualifiers, generated, data }) {
   const separuh = makeStage(suku, 2, 'SEPARUH', 'SEPARUH').map((node, index) => ({ ...node, label: `SEPARUH ${index + 1}` }));
   const finalY = (separuh[0].y + separuh[1].y) / 2;
   const height = top * 2 + (rows.length - 1) * rowHeight;
-  const x = { row: 52, prelim: 405, p32: 545, p16: 725, suku: 905, separuh: 1090, final: 1270 };
+  const x = { row: 52, p32: 430, p16: 720, suku: 1000, separuh: 1260, final: 1490 };
   const slotName = (code) => (generated && qualifiers[code]?.name) || qualifierSlotLabel(code);
-  const entryPath = (row) => {
-    const y1 = row.y - 24;
-    const y2 = row.y + 24;
-    const elbow = x.prelim - 30;
-    return [
-      `M ${x.row + 300} ${y1} H ${elbow}`,
-      `M ${x.row + 300} ${y2} H ${elbow}`,
-      `M ${elbow} ${y1} V ${y2}`,
-      `M ${elbow} ${row.y} H ${x.prelim}`,
-    ].join(' ');
+  const rowScore = (row, side) => {
+    const result = saved[row.code];
+    const hasScore = result?.status === 'Tamat' && result.homeScore !== '' && result.awayScore !== '';
+    if (hasScore) return side === 'home' ? result.homeScore : result.awayScore;
+    if (!row.awayCode && side === 'away') return 'BYE';
+    return '';
   };
+  const scorePair = (code, bye = false) => {
+    const result = saved[code];
+    if (result?.status === 'Tamat' && result.homeScore !== '' && result.awayScore !== '') return [result.homeScore, result.awayScore];
+    return ['', bye ? 'BYE' : ''];
+  };
+  const sourceName = (source) => {
+    if (source?.winner?.name) return source.winner.name;
+    if (source?.bye) return `Laluan ${source.label}`;
+    return source?.label ? `Pemenang ${source.label}` : 'Menunggu';
+  };
+  const trimCardName = (name) => (name || 'Menunggu').length > 28 ? `${name.slice(0, 27)}...` : name;
   const bracketPath = (source, targetY, fromX, elbowX, toX) => [
     ...source.map((item) => `M ${fromX} ${item.y} H ${elbowX}`),
     `M ${elbowX} ${source[0].y} V ${source[source.length - 1].y}`,
     `M ${elbowX} ${targetY} H ${toX}`,
   ].join(' ');
-  const nodeX = (label) => label.startsWith('P32') ? x.p32 : label.startsWith('P16') ? x.p16 : label.startsWith('SUKU') ? x.suku : x.separuh;
-  const nodeW = (label) => label.startsWith('SEPARUH') ? 104 : label.startsWith('SUKU') ? 82 : 70;
+  const nodeX = (label, map = x) => label.startsWith('P32') ? map.p32 : label.startsWith('P16') ? map.p16 : label.startsWith('SUKU') ? map.suku : map.separuh;
+  const cardW = 250;
+  const cardH = 72;
+  const scoreW = 42;
+  const renderMatchCard = ({ xPos, y, code, homeName, awayName, homeScore = '', awayScore = '', bye = false, winner = null, className = '' }) => (
+    <g className={`modern-match-card ${bye ? 'is-bye-card' : ''} ${winner ? 'has-winner' : ''} ${className}`} key={`${code}-${xPos}-${y}`}>
+      <text className="match-code-label" x={xPos} y={y - cardH / 2 - 8}>{code}</text>
+      <rect className="match-card-shell" x={xPos} y={y - cardH / 2} width={cardW} height={cardH} rx="10" />
+      <line className="match-card-divider" x1={xPos} y1={y} x2={xPos + cardW} y2={y} />
+      <rect className="match-score-block" x={xPos + cardW - scoreW} y={y - cardH / 2} width={scoreW} height={cardH} rx="8" />
+      <circle className="match-vs-dot" cx={xPos + cardW - scoreW} cy={y} r="12" />
+      <text className="match-vs-text" x={xPos + cardW - scoreW} y={y + 4} textAnchor="middle">vs</text>
+      <text className="match-card-team" x={xPos + 16} y={y - 13}>{trimCardName(homeName)}</text>
+      <text className="match-card-team" x={xPos + 16} y={y + 27}>{trimCardName(awayName)}</text>
+      <text className="match-card-score" x={xPos + cardW - scoreW / 2} y={y - 13} textAnchor="middle">{homeScore}</text>
+      <text className="match-card-score" x={xPos + cardW - scoreW / 2} y={y + 27} textAnchor="middle">{awayScore}</text>
+    </g>
+  );
+  const renderStageCard = (node, map = x) => {
+    const [homeScore, awayScore] = scorePair(node.code);
+    return renderMatchCard({
+      xPos: nodeX(node.label, map),
+      y: node.y,
+      code: node.label,
+      homeName: sourceName(node.homeSource),
+      awayName: sourceName(node.awaySource),
+      homeScore,
+      awayScore,
+      winner: node.winner,
+    });
+  };
+  const buildSide = (start, sideName) => {
+    const offset = rows[start]?.y - top;
+    const sideRows = rows.slice(start, start + 16).map((row) => ({ ...row, y: row.y - offset }));
+    const sideOpening = sideRows.map((row) => ({
+      y: row.y,
+      label: row.code,
+      bye: !row.awayCode,
+      ...matchOutcome(row.code, row.home, row.away),
+    }));
+    const sideP32 = makeStage(sideOpening, 8, 'P32', 'P32', start === 0 ? 0 : 8);
+    const sideP16 = makeStage(sideP32, 4, 'P16', 'P16', start === 0 ? 0 : 4);
+    const sideSuku = makeStage(sideP16, 2, 'SUKU', 'SUKU', start === 0 ? 0 : 2).map((node, index) => ({ ...node, label: `SUKU ${start === 0 ? index + 1 : index + 3}` }));
+    const sideSeparuh = makeStage(sideSuku, 1, 'SEPARUH', 'SEPARUH', start === 0 ? 0 : 1).map((node) => ({ ...node, label: `SEPARUH ${start === 0 ? 1 : 2}` }));
+    return { sideName, sideRows, sideOpening, sideP32, sideP16, sideSuku, sideSeparuh };
+  };
+  const sideHeight = top * 2 + 15 * rowHeight;
+  const sideX = { row: 390, p32: 700, p16: 1040, suku: 1040, separuh: 1250 };
+  const sideXReverse = { row: 2080, p32: 1770, p16: 1430, suku: 1430, separuh: 1220 };
+  const leftSide = buildSide(0, 'Bahagian Kiri');
+  const rightSide = buildSide(16, 'Bahagian Kanan');
+  const connectorPath = (source, targetY, sourceX, targetX, reverse = false) => {
+    const sourceEdge = reverse ? sourceX : sourceX + cardW;
+    const targetEdge = reverse ? targetX + cardW : targetX;
+    const elbow = reverse
+      ? Math.min(sourceEdge - 30, targetEdge + 42)
+      : Math.max(sourceEdge + 30, targetEdge - 42);
+    return bracketPath(source, targetY, sourceEdge, elbow, targetEdge);
+  };
+  const renderBracketSide = (side, reverse = false) => {
+    const map = reverse ? sideXReverse : sideX;
+    return (
+      <g key={side.sideName}>
+        {side.sideP32.map((node, index) => <path className="bracket-line" key={`p32-line-${side.sideName}-${node.label}`} d={connectorPath(side.sideOpening.slice(index * 2, index * 2 + 2), node.y, map.row, map.p32, reverse)} />)}
+        {side.sideP16.map((node, index) => <path className="bracket-line" key={`p16-line-${side.sideName}-${node.label}`} d={connectorPath(side.sideP32.slice(index * 2, index * 2 + 2), node.y, map.p32, map.p16, reverse)} />)}
+        {side.sideSuku.map((node, index) => <path className="bracket-line" key={`suku-line-${side.sideName}-${node.label}`} d={connectorPath(side.sideP16.slice(index * 2, index * 2 + 2), node.y, map.p16, map.suku, reverse)} />)}
+        {side.sideSeparuh.map((node, index) => <path className="bracket-line final-line" key={`separuh-line-${side.sideName}-${node.label}`} d={connectorPath(side.sideSuku.slice(index * 2, index * 2 + 2), node.y, map.suku, map.separuh, reverse)} />)}
+        {side.sideRows.map((row) => renderMatchCard({
+          xPos: map.row,
+          y: row.y,
+          code: row.code,
+          homeName: slotName(row.homeCode),
+          awayName: row.awayCode ? slotName(row.awayCode) : 'BYE - Lolos Terus',
+          homeScore: rowScore(row, 'home'),
+          awayScore: rowScore(row, 'away'),
+          bye: !row.awayCode,
+          winner: side.sideOpening.find((node) => node.y === row.y)?.winner,
+        }))}
+        {[side.sideP32, side.sideP16, side.sideSuku, side.sideSeparuh].flat().map((node) => renderStageCard(node, map))}
+      </g>
+    );
+  };
+  const finalSources = [leftSide.sideSeparuh[0], rightSide.sideSeparuh[0]];
+  const [finalHomeScore, finalAwayScore] = scorePair('FINAL-1');
+  const cupWidth = 2720;
+  const cupHeight = sideHeight + 250;
+  const earlyCanvas = { x: 330, width: 2050, height: sideHeight };
+  const finalX = 1235;
+  const cupFinalY = (leftSide.sideSuku[0].y + leftSide.sideSuku[1].y) / 2;
+  const plateTop = cupFinalY + 300;
+  const plateSemiY = plateTop + 124;
+  const plateFinalY = plateTop + 214;
+  const renderRoundHeader = (xPos, label, anchor = 'middle') => (
+    <text className="bracket-round-heading" x={xPos} y="24" textAnchor={anchor}>{label}</text>
+  );
+  const drawCupFinalLine = () => {
+    const leftEdge = sideX.separuh + cardW;
+    const rightEdge = sideXReverse.separuh;
+    const finalLeft = finalX;
+    const finalRight = finalX + cardW;
+    return <>
+      <path className="bracket-line final-line" d={`M ${leftEdge} ${leftSide.sideSeparuh[0].y} H ${finalLeft - 34} V ${cupFinalY} H ${finalLeft}`} />
+      <path className="bracket-line final-line" d={`M ${rightEdge} ${rightSide.sideSeparuh[0].y} H ${finalRight + 34} V ${cupFinalY} H ${finalRight}`} />
+    </>;
+  };
+  const renderEarlySide = (side, reverse = false) => {
+    const map = reverse ? sideXReverse : sideX;
+    return <g key={`${side.sideName}-early`}>
+      {side.sideP32.map((node, index) => <path className="bracket-line" key={`early-p32-line-${side.sideName}-${node.label}`} d={connectorPath(side.sideOpening.slice(index * 2, index * 2 + 2), node.y, map.row, map.p32, reverse)} />)}
+      {side.sideP16.map((node, index) => <path className="bracket-line" key={`early-p16-line-${side.sideName}-${node.label}`} d={connectorPath(side.sideP32.slice(index * 2, index * 2 + 2), node.y, map.p32, map.p16, reverse)} />)}
+      {side.sideRows.map((row) => renderMatchCard({
+        xPos: map.row,
+        y: row.y,
+        code: row.code,
+        homeName: slotName(row.homeCode),
+        awayName: row.awayCode ? slotName(row.awayCode) : 'BYE - Lolos Terus',
+        homeScore: rowScore(row, 'home'),
+        awayScore: rowScore(row, 'away'),
+        bye: !row.awayCode,
+        winner: side.sideOpening.find((node) => node.y === row.y)?.winner,
+      }))}
+      {[side.sideP32, side.sideP16].flat().map((node) => renderStageCard(node, map))}
+    </g>;
+  };
+  const finalMap = {
+    plateChampion: 45,
+    plateFinal: 265,
+    plateSemi: 585,
+    suku: 910,
+    cupSemi: 1235,
+    cupFinal: 1545,
+    cupChampion: 1845,
+    q1: 132,
+    q2: 262,
+    q3: 392,
+    q4: 522,
+    topSemi: 197,
+    bottomSemi: 457,
+    finalY: 327,
+    championY: 327,
+    plateY: 327,
+  };
+  const finalCanvasWidth = 2090;
+  const finalCanvasHeight = 650;
+  const renderFinalBracket = () => {
+    const finalNode = matchOutcome('FINAL-1', finalSources[0]?.winner || null, finalSources[1]?.winner || null);
+    const qNodes = suku.map((node, index) => ({
+      node,
+      y: [finalMap.q1, finalMap.q2, finalMap.q3, finalMap.q4][index],
+    }));
+    const semiNodes = [
+      { node: separuh[0], y: finalMap.topSemi },
+      { node: separuh[1], y: finalMap.bottomSemi },
+    ];
+    const bracketJoin = (fromYs, targetY, sourceX, targetX) => {
+      const elbow = Math.round((sourceX + targetX) / 2);
+      const topY = Math.min(...fromYs);
+      const bottomY = Math.max(...fromYs);
+      return [
+        ...fromYs.map((y) => `M ${sourceX} ${y} H ${elbow}`),
+        `M ${elbow} ${topY} V ${bottomY}`,
+        `M ${elbow} ${targetY} H ${targetX}`,
+      ].join(' ');
+    };
+    const rightJoin = bracketJoin;
+    const leftJoin = bracketJoin;
+    const simpleBox = ({ xPos, y, code, homeName, awayName, className = '' }) => renderMatchCard({
+      xPos,
+      y,
+      code,
+      homeName,
+      awayName,
+      className,
+    });
+    const championCard = (xPos, y, label, className = '') => (
+      <g className={`cup-champion-card ${className}`} transform={`translate(${xPos} ${y - 28})`}>
+        <rect width="185" height="56" rx="13" />
+        <text x="92.5" y="35" textAnchor="middle">{label}</text>
+      </g>
+    );
+    return <>
+      <text className="bracket-round-heading" x={finalMap.plateFinal + cardW / 2} y="36" textAnchor="middle">AKHIR</text>
+      <text className="bracket-round-heading" x={finalMap.plateSemi + cardW / 2} y="36" textAnchor="middle">SEPARUH AKHIR</text>
+      <text className="bracket-round-heading" x={finalMap.suku + cardW / 2} y="36" textAnchor="middle">SUKU AKHIR</text>
+      <text className="bracket-round-heading" x={finalMap.cupSemi + cardW / 2} y="36" textAnchor="middle">SEPARUH AKHIR</text>
+      <text className="bracket-round-heading" x={finalMap.cupFinal + cardW / 2} y="36" textAnchor="middle">AKHIR</text>
+      <text className="bracket-center-title cup-label" x={finalMap.cupFinal + cardW / 2} y="92" textAnchor="middle">CUP</text>
+      <text className="bracket-center-title plate-title" x={finalMap.plateFinal + cardW / 2} y="92" textAnchor="middle">PLATE</text>
+
+      <path className="bracket-line final-line" d={rightJoin([finalMap.q1, finalMap.q2], finalMap.topSemi, finalMap.suku + cardW, finalMap.cupSemi)} />
+      <path className="bracket-line final-line" d={rightJoin([finalMap.q3, finalMap.q4], finalMap.bottomSemi, finalMap.suku + cardW, finalMap.cupSemi)} />
+      <path className="bracket-line final-line" d={rightJoin([finalMap.topSemi, finalMap.bottomSemi], finalMap.finalY, finalMap.cupSemi + cardW, finalMap.cupFinal)} />
+      <path className="bracket-line final-line" d={`M ${finalMap.cupFinal + cardW} ${finalMap.finalY} H ${finalMap.cupChampion}`} />
+
+      <path className="bracket-line final-line" d={leftJoin([finalMap.q1, finalMap.q2], finalMap.topSemi, finalMap.suku, finalMap.plateSemi + cardW)} />
+      <path className="bracket-line final-line" d={leftJoin([finalMap.q3, finalMap.q4], finalMap.bottomSemi, finalMap.suku, finalMap.plateSemi + cardW)} />
+      <path className="bracket-line final-line" d={leftJoin([finalMap.topSemi, finalMap.bottomSemi], finalMap.plateY, finalMap.plateSemi, finalMap.plateFinal + cardW)} />
+      <path className="bracket-line final-line" d={`M ${finalMap.plateFinal} ${finalMap.plateY} H ${finalMap.plateChampion + 185}`} />
+
+      {qNodes.map(({ node, y }) => {
+        const [homeScore, awayScore] = scorePair(node.code);
+        return renderMatchCard({
+          xPos: finalMap.suku,
+          y,
+          code: node.label,
+          homeName: sourceName(node.homeSource),
+          awayName: sourceName(node.awaySource),
+          homeScore,
+          awayScore,
+          winner: node.winner,
+        });
+      })}
+      {semiNodes.map(({ node, y }) => {
+        const [homeScore, awayScore] = scorePair(node.code);
+        return renderMatchCard({
+          xPos: finalMap.cupSemi,
+          y,
+          code: node.label,
+          homeName: sourceName(node.homeSource),
+          awayName: sourceName(node.awaySource),
+          homeScore,
+          awayScore,
+          winner: node.winner,
+        });
+      })}
+      {renderMatchCard({
+        xPos: finalMap.cupFinal,
+        y: finalMap.finalY,
+        code: 'FINAL CUP',
+        homeName: sourceName(finalSources[0]),
+        awayName: sourceName(finalSources[1]),
+        homeScore: finalHomeScore,
+        awayScore: finalAwayScore,
+        winner: finalNode.winner,
+        className: 'modern-final-card',
+      })}
+      {simpleBox({ xPos: finalMap.plateSemi, y: finalMap.topSemi, code: 'SA PLATE 1', homeName: 'Kalah Suku 1', awayName: 'Kalah Suku 2', className: 'plate-match-card' })}
+      {simpleBox({ xPos: finalMap.plateSemi, y: finalMap.bottomSemi, code: 'SA PLATE 2', homeName: 'Kalah Suku 3', awayName: 'Kalah Suku 4', className: 'plate-match-card' })}
+      {simpleBox({ xPos: finalMap.plateFinal, y: finalMap.plateY, code: 'FINAL PLATE', homeName: 'Pemenang Plate 1', awayName: 'Pemenang Plate 2', className: 'plate-match-card plate-final-card' })}
+      {championCard(finalMap.cupChampion, finalMap.championY, 'JOHAN CUP')}
+      {championCard(finalMap.plateChampion, finalMap.championY, 'JOHAN PLATE', 'plate-winner-card')}
+    </>;
+  };
   return <section className="classic-bracket-panel modern-bracket-panel">
-    <div className="classic-bracket-head">
-      <div><span>BRACKET RASMI</span><h2>Pusingan Kalah Singkir</h2><p>Visual moden, susunan ikut bracket yang diberi.</p></div>
-      <strong>64</strong>
-    </div>
     <div className="classic-bracket-scroll modern-bracket-scroll">
-      <svg className="modern-bracket-svg" viewBox={`0 0 1400 ${height}`} role="img" aria-label="Bracket kalah singkir">
+      <svg
+        className="modern-bracket-svg modern-bracket-cup-svg"
+        style={{ '--bracket-canvas-width': `${phase === 'early' ? earlyCanvas.width : finalCanvasWidth}px` }}
+        viewBox={phase === 'early' ? `${earlyCanvas.x} 0 ${earlyCanvas.width} ${earlyCanvas.height}` : `0 0 ${finalCanvasWidth} ${finalCanvasHeight}`}
+        role="img"
+        aria-label="Bracket kalah singkir Cup dan Plate"
+      >
         <defs>
           <linearGradient id="bracketLine" x1="0" x2="1"><stop offset="0%" stopColor="#0aa4b5" /><stop offset="55%" stopColor="#34d7e8" /><stop offset="100%" stopColor="#d6ff3f" /></linearGradient>
           <filter id="bracketGlow" x="-35%" y="-35%" width="170%" height="170%"><feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor="#19cde0" floodOpacity=".45" /></filter>
         </defs>
-        <rect className="bracket-bg" x="0" y="0" width="1400" height={height} rx="28" />
-        {rows.map((row) => <path className="bracket-line seed-entry-line" key={`entry-${row.homeCode}-${row.awayCode || 'bye'}`} d={entryPath(row)} />)}
-        {rows.map((row, index) => <g className="modern-seed-pair" key={index}>
-          <g className="modern-seed">
-            <rect x={x.row} y={row.y - 44} width="300" height="38" rx="15" />
-            <circle cx={x.row + 18} cy={row.y - 20} r="11" />
-            <text x={x.row + 18} y={row.y - 16} textAnchor="middle">1</text>
-            <text className="seed-name" x={x.row + 42} y={row.y - 16}>{slotName(row.homeCode)}</text>
-            <text className="seed-badge" x={x.row + 274} y={row.y - 16} textAnchor="middle">{row.homeSeed}</text>
-          </g>
-          <g className={`modern-seed ${row.awayCode ? '' : 'is-bye-slot'}`}>
-            <rect x={x.row} y={row.y + 6} width="300" height="38" rx="15" />
-            <circle cx={x.row + 18} cy={row.y + 20} r="11" />
-            <text x={x.row + 18} y={row.y + 24} textAnchor="middle">2</text>
-            <text className="seed-name" x={x.row + 42} y={row.y + 24}>{row.awayCode ? slotName(row.awayCode) : 'BYE - Lolos Terus'}</text>
-            <text className="seed-badge" x={x.row + 274} y={row.y + 24} textAnchor="middle">{row.awaySeed}</text>
-          </g>
-        </g>)}
-        {openingNodes.map((node) => <g className={`modern-node modern-opening-node ${node.bye ? 'is-bye-node' : ''} ${node.winner ? 'has-winner' : ''}`} key={`opening-node-${node.label}-${node.y}`}>
-          <rect x={x.prelim} y={node.y - 24} width="92" height="48" rx="14" />
-          <text className="node-code" x={x.prelim + 46} y={node.y - 5} textAnchor="middle">{node.label}</text>
-          <text className="node-winner" x={x.prelim + 46} y={node.y + 12} textAnchor="middle">{node.winner ? compactBracketName(node.winner.name) : 'Menunggu'}</text>
-        </g>)}
-        {p32.map((node, index) => <path className="bracket-line" key={`p32-line-${node.label}`} d={bracketPath(openingNodes.slice(index * 2, index * 2 + 2), node.y, x.prelim + 92, x.p32 - 30, x.p32)} />)}
-        {p16.map((node, index) => <path className="bracket-line" key={`p16-line-${node.label}`} d={bracketPath(p32.slice(index * 2, index * 2 + 2), node.y, x.p32 + 70, x.p16 - 30, x.p16)} />)}
-        {suku.map((node, index) => <path className="bracket-line" key={`suku-line-${node.label}`} d={bracketPath(p16.slice(index * 2, index * 2 + 2), node.y, x.p16 + 72, x.suku - 30, x.suku)} />)}
-        {separuh.map((node, index) => <path className="bracket-line" key={`separuh-line-${node.label}`} d={bracketPath(suku.slice(index * 2, index * 2 + 2), node.y, x.suku + 84, x.separuh - 30, x.separuh)} />)}
-        <path className="bracket-line final-line" d={bracketPath(separuh, finalY, x.separuh + 104, x.final - 34, x.final)} />
-        {[p32, p16, suku, separuh].flat().map((node) => <g className={`modern-node ${node.winner ? 'has-winner' : ''}`} key={node.label}>
-          <rect x={nodeX(node.label)} y={node.y - 21} width={nodeW(node.label)} height="42" rx="13" />
-          <text className="node-code" x={nodeX(node.label) + nodeW(node.label) / 2} y={node.y - 2} textAnchor="middle">{node.label}</text>
-          <text className="node-winner" x={nodeX(node.label) + nodeW(node.label) / 2} y={node.y + 13} textAnchor="middle">{node.winner ? compactBracketName(node.winner.name) : ''}</text>
-        </g>)}
-        <g className="modern-final">
-          <rect x={x.final} y={finalY - 35} width="86" height="70" rx="18" />
-          <text x={x.final + 43} y={finalY - 4} textAnchor="middle">FINAL</text>
-          <text x={x.final + 43} y={finalY + 18} textAnchor="middle">JUARA</text>
+        <rect className="bracket-bg" x="0" y="0" width={cupWidth} height={phase === 'early' ? sideHeight : finalCanvasHeight} rx="28" />
+        {phase === 'early' ? <>
+          {renderRoundHeader(sideX.row + cardW / 2, 'PUSINGAN 64')}
+          {renderRoundHeader(sideX.p32 + cardW / 2, 'PUSINGAN 32')}
+          {renderRoundHeader(sideX.p16 + cardW / 2, 'PUSINGAN 16')}
+          {renderRoundHeader(sideXReverse.p16 + cardW / 2, 'PUSINGAN 16')}
+          {renderRoundHeader(sideXReverse.p32 + cardW / 2, 'PUSINGAN 32')}
+          {renderRoundHeader(sideXReverse.row + cardW / 2, 'PUSINGAN 64')}
+          {renderEarlySide(leftSide)}
+          {renderEarlySide(rightSide, true)}
+        </> : renderFinalBracket()}
+        {false && <>
+        {drawCupFinalLine()}
+        <text className="bracket-center-title" x={finalX + cardW / 2} y={cupFinalY - 112} textAnchor="middle">CUP</text>
+        {renderMatchCard({
+          xPos: finalX,
+          y: cupFinalY,
+          code: 'FINAL CUP',
+          homeName: sourceName(finalSources[0]),
+          awayName: sourceName(finalSources[1]),
+          homeScore: finalHomeScore,
+          awayScore: finalAwayScore,
+          winner: matchOutcome('FINAL-1', finalSources[0]?.winner || null, finalSources[1]?.winner || null).winner,
+          className: 'modern-final-card',
+        })}
+        <g className="cup-champion-card">
+          <rect x={finalX + 32} y={cupFinalY + 72} width="186" height="56" rx="13" />
+          <text x={finalX + cardW / 2} y={cupFinalY + 107} textAnchor="middle">JUARA CUP</text>
         </g>
+        <g className="plate-zone">
+          <text className="bracket-center-title plate-title" x={cupWidth / 2} y={plateTop - 28} textAnchor="middle">PLATE</text>
+          <path className="plate-drop-line" d={`M ${sideX.suku + cardW + 38} ${leftSide.sideSuku[0].y + 36} V ${plateTop + 42} H ${cupWidth / 2 - 420} V ${plateSemiY}`} />
+          <path className="plate-drop-line" d={`M ${sideX.suku + cardW + 38} ${leftSide.sideSuku[1].y + 36} V ${plateTop + 42} H ${cupWidth / 2 - 420} V ${plateSemiY}`} />
+          <path className="plate-drop-line" d={`M ${sideXReverse.suku - 38} ${rightSide.sideSuku[0].y + 36} V ${plateTop + 42} H ${cupWidth / 2 + 420} V ${plateSemiY}`} />
+          <path className="plate-drop-line" d={`M ${sideXReverse.suku - 38} ${rightSide.sideSuku[1].y + 36} V ${plateTop + 42} H ${cupWidth / 2 + 420} V ${plateSemiY}`} />
+          <g className="plate-card" transform={`translate(${cupWidth / 2 - 560} ${plateSemiY - 42})`}>
+            <rect width="280" height="84" rx="12" />
+            <text className="plate-card-title" x="140" y="27" textAnchor="middle">SEPARUH AKHIR PLATE 1</text>
+            <text x="140" y="55" textAnchor="middle">Kalah Suku 1 vs Kalah Suku 2</text>
+          </g>
+          <g className="plate-card" transform={`translate(${cupWidth / 2 + 280} ${plateSemiY - 42})`}>
+            <rect width="280" height="84" rx="12" />
+            <text className="plate-card-title" x="140" y="27" textAnchor="middle">SEPARUH AKHIR PLATE 2</text>
+            <text x="140" y="55" textAnchor="middle">Kalah Suku 3 vs Kalah Suku 4</text>
+          </g>
+          <path className="bracket-line plate-final-line" d={`M ${cupWidth / 2 - 280} ${plateSemiY} H ${cupWidth / 2 - 155} V ${plateFinalY} H ${cupWidth / 2 - 120}`} />
+          <path className="bracket-line plate-final-line" d={`M ${cupWidth / 2 + 280} ${plateSemiY} H ${cupWidth / 2 + 155} V ${plateFinalY} H ${cupWidth / 2 + 120}`} />
+          <g className="plate-card plate-final-card" transform={`translate(${cupWidth / 2 - 120} ${plateFinalY - 48})`}>
+            <rect width="240" height="96" rx="12" />
+            <text className="plate-card-title" x="120" y="30" textAnchor="middle">FINAL PLATE</text>
+            <text x="120" y="60" textAnchor="middle">Pemenang SA Plate 1 vs 2</text>
+          </g>
+          <g className="cup-champion-card plate-winner-card" transform={`translate(${cupWidth / 2 - 92} ${plateFinalY + 78})`}>
+            <rect width="184" height="54" rx="13" />
+            <text x="92" y="34" textAnchor="middle">JUARA PLATE</text>
+          </g>
+        </g>
+        </>}
       </svg>
     </div>
   </section>;
@@ -932,17 +1545,27 @@ function ModernBracket({ qualifiers, generated, data }) {
 
 function Knockout({ standings, data }) {
   const [mobileSide, setMobileSide] = useState('left');
+  const [bracketPhase, setBracketPhase] = useState('early');
   const generated = Boolean(data.settings?.knockoutGenerated);
   const qualifiers = generated ? knockoutQualifiers(data, standings) : {};
-  let openingNumber = 0;
-  const opening = KNOCKOUT_OPENING.map(([homeCode, awayCode]) => ({ homeCode, awayCode, code: awayCode ? `P${++openingNumber}` : `${homeCode} · BYE` }));
+  const opening = KNOCKOUT_OPENING.map(([homeCode, awayCode], index) => ({ homeCode, awayCode, code: `P${index + 1}` }));
   return <div className="page-stack knockout-page">
     <div className="knockout-page-head">
-      <div><span><FontAwesomeIcon icon={faFlagCheckered} /> FORMAT KALAH SINGKIR</span><h1>Bracket Kejohanan</h1><p>58 pasukan terbaik mara ke pusingan kalah singkir. Seed 1 hingga 6 menerima BYE.</p></div>
+      <div><span><FontAwesomeIcon icon={faFlagCheckered} /> FORMAT KALAH SINGKIR</span><h1>Laluan Kejuaraan</h1><p>58 pasukan terbaik berentap dalam laluan kalah singkir menuju gelaran juara. Pasukan di kedudukan 1 hingga 6 diberi laluan terus ke pusingan seterusnya.</p></div>
       <div className="knockout-head-stats"><div><strong>58</strong><span>PASUKAN</span></div><div><strong>6</strong><span>BYE</span></div><div><strong>1</strong><span>JUARA</span></div></div>
     </div>
-    <div className={`knockout-note ${generated ? '' : 'waiting-generation'}`}><FontAwesomeIcon icon={faBolt} /><strong>{generated ? 'Pusingan 64 / Awal' : 'Slot Kalah Mati Belum Diisi'}</strong><span>{generated ? 'Susunan seed dijana daripada kedudukan keseluruhan semasa.' : 'Nama pasukan akan dipaparkan selepas semua perlawanan kumpulan selesai dan admin menekan Jana Perlawanan Kalah Mati.'}</span></div>
-    <ModernBracket qualifiers={qualifiers} generated={generated} data={data} />
+    <div className={`knockout-note ${generated ? '' : 'waiting-generation'}`}><FontAwesomeIcon icon={faBolt} /><strong>{generated ? 'Pusingan 64' : 'Slot Kalah Mati Belum Diisi'}</strong><span>{generated ? 'Susunan seed dijana daripada kedudukan keseluruhan semasa.' : 'Nama pasukan akan dipaparkan selepas semua perlawanan kumpulan selesai dan admin menekan Jana Perlawanan Kalah Mati.'}</span></div>
+    <div className="knockout-inner-tabs">
+      <button className={bracketPhase === 'early' ? 'active' : ''} onClick={() => setBracketPhase('early')}>
+        <strong>Peringkat 64 - 16</strong>
+        <span>Pusingan 64, pusingan 32 dan pusingan 16</span>
+      </button>
+      <button className={bracketPhase === 'finals' ? 'active' : ''} onClick={() => setBracketPhase('finals')}>
+        <strong>Peringkat Suku Akhir - Akhir</strong>
+        <span>Suku akhir, separuh akhir dan akhir</span>
+      </button>
+    </div>
+    <ModernBracket qualifiers={qualifiers} generated={generated} data={data} phase={bracketPhase} />
     <div className="mobile-bracket-tabs old-bracket-ui">
       <button className={mobileSide === 'left' ? 'active' : ''} onClick={() => setMobileSide('left')}>32 Kiri</button>
       <button className={mobileSide === 'final' ? 'active' : ''} onClick={() => setMobileSide('final')}>Final</button>
@@ -967,7 +1590,7 @@ function Knockout({ standings, data }) {
 function Stats({ data, standings, teamById }) {
   const [query, setQuery] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
-  const [statsTab, setStatsTab] = useState('groups');
+  const [statsView, setStatsView] = useState('groups');
   const groups = data.groups.filter((group) => (!groupFilter || group.id === groupFilter)
     && (!query || group.teamIds.some((id) => teamById[id]?.name.toLowerCase().includes(query.toLowerCase()))));
   const qualifiers = (position) => data.groups.map((group) => {
@@ -985,9 +1608,15 @@ function Stats({ data, standings, teamById }) {
   </section>;
   return <div className="page-stack group-standings-page">
     <div className="group-standings-head"><div><span><FontAwesomeIcon icon={faTrophy} /> CARTA KEDUDUKAN</span><h1>Kedudukan Mengikut Kumpulan</h1><p>Susunan sekolah berdasarkan keputusan perlawanan round robin.</p></div><div><strong>{data.groups.length}</strong><span>KUMPULAN</span></div></div>
-    <div className="stats-tabs"><button className={statsTab === 'groups' ? 'active' : ''} onClick={() => setStatsTab('groups')}><FontAwesomeIcon icon={faLayerGroup} /><strong>Kedudukan Kumpulan</strong><span>Semua pasukan mengikut kumpulan</span></button><button className={statsTab === 'champions' ? 'active' : ''} onClick={() => setStatsTab('champions')}><FontAwesomeIcon icon={faTrophy} /><strong>Johan Kumpulan</strong><span>Ranking semua juara kumpulan</span></button><button className={statsTab === 'runners' ? 'active' : ''} onClick={() => setStatsTab('runners')}><FontAwesomeIcon icon={faMedal} /><strong>Naib Johan Kumpulan</strong><span>Ranking semua tempat kedua</span></button></div>
-    {statsTab === 'groups' && <><div className="group-standings-tools"><label className="search"><FontAwesomeIcon icon={faSearch} /><input placeholder="Cari sekolah atau regu..." value={query} onChange={(e) => setQuery(e.target.value)} /></label><select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}><option value="">Semua Kumpulan</option>{data.groups.map((g) => <option value={g.id} key={g.id}>{g.name}</option>)}</select></div>
-    <div className="group-standings-grid">{groups.map((group, groupIndex) => {
+    <div className="stats-tabs">
+      <button className={statsView === 'groups' ? 'active' : ''} onClick={() => setStatsView('groups')}><FontAwesomeIcon icon={faLayerGroup} /><strong>Kedudukan Kumpulan</strong><span>Semua pasukan mengikut kumpulan</span></button>
+      <button className={statsView === 'champions' ? 'active' : ''} onClick={() => setStatsView('champions')}><FontAwesomeIcon icon={faTrophy} /><strong>Johan Kumpulan</strong><span>Ranking tempat pertama ikut mata dan beza mata</span></button>
+      <button className={statsView === 'runners' ? 'active' : ''} onClick={() => setStatsView('runners')}><FontAwesomeIcon icon={faMedal} /><strong>Naib Johan Kumpulan</strong><span>Ranking tempat kedua ikut mata dan beza mata</span></button>
+    </div>
+    {statsView === 'groups' && <div className="group-standings-tools"><label className="search"><FontAwesomeIcon icon={faSearch} /><input placeholder="Cari sekolah atau regu..." value={query} onChange={(e) => setQuery(e.target.value)} /></label><select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}><option value="">Semua Kumpulan</option>{data.groups.map((g) => <option value={g.id} key={g.id}>{g.name}</option>)}</select></div>}
+    {statsView === 'champions' && <RankingTable rows={qualifiers(0)} eyebrow="TEMPAT PERTAMA SETIAP KUMPULAN" title="Ranking Johan Kumpulan" />}
+    {statsView === 'runners' && <RankingTable rows={qualifiers(1)} eyebrow="TEMPAT KEDUA SETIAP KUMPULAN" title="Ranking Naib Johan Kumpulan" />}
+    {statsView === 'groups' && <div className="group-standings-grid">{groups.map((group, groupIndex) => {
       const teamIds = new Set(group.teamIds);
       const rows = standings.filter((team) => teamIds.has(team.id));
       return <article className="group-standing-card" key={group.id}>
@@ -997,9 +1626,7 @@ function Stats({ data, standings, teamById }) {
           <span className={`rank n${index + 1}`}>{index + 1}</span><div className="group-team"><TeamLogo team={team} /><strong>{team.name}</strong>{index === 0 && <FontAwesomeIcon icon={faMedal} />}</div><span>{team.mp}</span><span>{team.w}</span><span>{team.l}</span><span>{team.gd > 0 ? '+' : ''}{team.gd}</span><b>{team.p}</b>
         </div>)}</div>
       </article>;
-    })}</div></>}
-    {statsTab === 'champions' && <RankingTable rows={qualifiers(0)} title="Ranking Johan Kumpulan" eyebrow="TEMPAT PERTAMA SETIAP KUMPULAN" />}
-    {statsTab === 'runners' && <RankingTable rows={qualifiers(1)} title="Ranking Naib Johan Kumpulan" eyebrow="TEMPAT KEDUA SETIAP KUMPULAN" />}
+    })}</div>}
   </div>;
 }
 
@@ -1010,7 +1637,7 @@ export default function App() {
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
       const expectedTeams = seedData().teams.length;
-      if (!localStorage.getItem(ROSTER_VERSION_KEY) || stored?.teams?.length !== expectedTeams) {
+      if (!localStorage.getItem(ROSTER_VERSION_KEY)) {
         localStorage.setItem(ROSTER_VERSION_KEY, 'done');
         return migrateRoster(stored);
       }
@@ -1037,14 +1664,15 @@ export default function App() {
         lastResetAt: new Date().toISOString(),
       },
     };
+    const persistedResetData = prepareTournamentForStorage(resetData);
     ignoreRemoteUntil.current = Date.now() + 3000;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(resetData));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedResetData));
     localStorage.setItem(ROSTER_VERSION_KEY, 'done');
     localStorage.setItem(KNOCKOUT_GATE_VERSION_KEY, 'done');
     if (!resetData.schools.some((school) => school.logo)) localStorage.setItem(LOGO_CLEANUP_KEY, 'done');
     setData(resetData);
     if (isFirebaseConfigured()) {
-      saveTournament(resetData).catch((error) => console.error('Reset tidak dapat sync ke Firebase.', error));
+      saveTournament(persistedResetData).catch((error) => console.error('Reset tidak dapat sync ke Firebase.', error));
     }
   };
   useEffect(() => {
@@ -1052,6 +1680,13 @@ export default function App() {
     return subscribeToTournament((remoteData) => {
       firebaseHydrated.current = true;
       if (Date.now() < ignoreRemoteUntil.current) return;
+      if (remoteData && isOlderThanLocalReset(remoteData)) {
+        const localData = getLocalTournamentData();
+        if (localData) {
+          saveTournament(localData).catch((error) => console.error('Reset tempatan tidak dapat dihantar semula ke Firebase.', error));
+        }
+        return;
+      }
       if (remoteData) setData(repairStoredData(remoteData));
       else saveTournament(data).catch((error) => console.error('Firebase belum dapat dimulakan.', error));
     }, (error) => {
@@ -1061,18 +1696,28 @@ export default function App() {
   }, []);
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      const persistedData = prepareTournamentForStorage(data);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedData));
       if (isFirebaseConfigured() && firebaseHydrated.current) {
-        saveTournament(data).catch((error) => console.error('Tidak dapat sync ke Firebase.', error));
+        saveTournament(persistedData).catch((error) => console.error('Tidak dapat sync ke Firebase.', error));
       }
     } catch (error) {
       console.error('Tidak dapat menyimpan data kejohanan.', error);
-      const compactData = removeOversizedLogos(data, true);
+      const compactData = removeOversizedLogos(data);
+      const persistedCompactData = prepareTournamentForStorage(compactData);
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(compactData));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedCompactData));
         setData(compactData);
       } catch (storageError) {
-        console.error('Storan browser masih penuh selepas logo dibuang.', storageError);
+        console.error('Storan browser masih penuh selepas logo besar dibuang.', storageError);
+        const logoFreeData = removeOversizedLogos(compactData, true);
+        const persistedLogoFreeData = prepareTournamentForStorage(logoFreeData);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedLogoFreeData));
+          setData(logoFreeData);
+        } catch (finalStorageError) {
+          console.error('Storan browser masih penuh selepas semua logo dibuang.', finalStorageError);
+        }
       }
     }
   }, [data]);
@@ -1112,7 +1757,7 @@ export default function App() {
   return <div className="app-shell">
     <aside className={menuOpen ? 'open' : ''}><div className="brand"><span><FontAwesomeIcon icon={faFutbol} /></span><div><strong>TAKRAW</strong><small>MSSD HULU LANGAT</small></div></div>
       <nav>{navItems.map((item) => <button className={active === item.id ? 'active' : ''} key={item.id} onClick={() => { setActive(item.id); setMenuOpen(false); }}><FontAwesomeIcon icon={item.icon} /><span>{item.label}</span></button>)}<button className="admin-nav-button" onClick={() => { setResetOpen(true); setMenuOpen(false); }}><FontAwesomeIcon icon={faGaugeHigh} /><span>Admin</span><b>Pusat Reset</b></button></nav>
-      <div className="side-card"><FontAwesomeIcon icon={faFire} /><strong>Musim 2026</strong><span>Sistem kejohanan aktif</span><div><i /></div></div>
+      <div className="side-card"><FontAwesomeIcon icon={faFire} /><strong>Tahun 2026</strong><span>Sistem kejohanan aktif</span><div><i /></div></div>
     </aside>
     <main><header><button className="menu-btn" onClick={() => setMenuOpen(!menuOpen)}><FontAwesomeIcon icon={faBars} /></button><div><span>Selamat datang,</span><strong>Urusetia Kejohanan</strong></div><div className="header-actions"><div className="system-live"><i /> SISTEM LIVE</div>{active === 'matches' && <PrintButton onClick={printPdf} />}<span className="avatar">UK</span></div></header>
       <div className="content" ref={printRef}>{page}</div>

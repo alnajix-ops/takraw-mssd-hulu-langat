@@ -93,8 +93,8 @@ export function seedData() {
       { id: 4, time: '10:05', text: 'Jadual Gelanggang C dikemas kini', type: 'schedule' },
     ],
     settings: {
-      date: '18 – 20 Jun 2026',
-      location: 'Dewan Kompleks Sukan Hulu Langat',
+      date: '22 - 26 JUN 2026',
+      location: 'DEWAN BERLIAN SK BANDAR SERI PUTRA',
       courts: 3,
     },
   };
