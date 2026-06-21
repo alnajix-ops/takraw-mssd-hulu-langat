@@ -14,12 +14,12 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { calculateStandings, initials, seedData } from './data';
 import { isFirebaseConfigured, saveTournament, subscribeToTournament } from './firebase';
-import takrawPlayer from './assets/takraw-player.png';
-import mssdLogo from './assets/mssd-hulu-langat-clean.png';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler);
 ChartJS.defaults.devicePixelRatio = 2;
 
+const takrawPlayer = '/assets/takraw-player.png';
+const mssdLogo = '/assets/mssd-hulu-langat-clean.png';
 const STORAGE_KEY = 'mssd-takraw-hulu-langat-v1';
 const LOGO_CLEANUP_KEY = 'mssd-takraw-logo-cleanup-v2';
 const ROSTER_VERSION_KEY = 'mssd-takraw-roster-2026-v3';
