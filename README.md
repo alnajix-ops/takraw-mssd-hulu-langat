@@ -27,6 +27,31 @@ Butang `Cetak PDF` akan mengeksport tab yang sedang dibuka dalam format A4 lands
 3. Aktifkan Firestore Database dalam Firebase.
 4. Jalankan semula aplikasi.
 
+Untuk sambung ke akaun Firebase yang lain:
+
+1. Buka Firebase Console pada akaun baru.
+2. Buat atau pilih project Firebase.
+3. Tambah app jenis Web, kemudian salin nilai `firebaseConfig`.
+4. Gantikan nilai dalam `.env` dengan config akaun baru itu.
+5. Pastikan Firestore Database sudah aktif.
+6. Data aplikasi akan disimpan di dokumen `tournaments/<VITE_TOURNAMENT_ID>`.
+
+Contoh rules Firestore untuk ujian dalaman:
+
+```js
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /tournaments/{tournamentId} {
+      allow read, write: if true;
+    }
+  }
+}
+```
+
+Nota: rules di atas sesuai untuk ujian tertutup sahaja. Untuk public/live, ketatkan
+rules mengikut login admin atau domain yang dibenarkan.
+
 ## Netlify
 
 Fail `netlify.toml` sudah disediakan:
